@@ -1,0 +1,94 @@
+#!/usr/bin/env python
+"""
+Makes a random selection of files and creates links (hard and symlinks) to selected files in destination directory.
+"""
+
+import os
+import sys
+import math
+import random
+import optparse
+import mimetypes
+
+video_extensions = ('.avi', '.mp4', '.mkv', '.divx', '.webm', '.wmv', '.asf', '.flv', '.mpg', '.mpeg', '.mov')
+audio_extensions = ('.mp3', '.m4a', '.aac', '.mpc', '.speex', '.flac', '.ape', '.ogg', '.wma')
+
+
+def parse_args(argv):
+    usage = 'usage: %prog [options] <dst-dir> <src-dir1> [<src-dir2>...]'
+    parser = optparse.OptionParser(usage=usage)
+    parser.add_option('-n', '--number', type='int', dest='limit',
+                      default=10,
+                      help='number of links to create. default: %default')
+    parser.add_option('--video', dest='video_media_only',
+                      default=False, action='store_true',
+                      help='filter video media files only')
+    parser.add_option('--audio', dest='audio_media_only',
+                      default=False, action='store_true',
+                      help='filter audio media files only')
+    parser.add_option('--hardlinks', dest='hardlinks',
+                      default=False, action='store_true',
+                      help='make hard links instead of symlinks')
+    parser.add_option('--do-not-follow-symlinks', dest='do_not_follow_symlinks',
+                      default=False, action='store_true',
+                      help='do not follow symlinks in source directories')
+
+    options, position_args = parser.parse_args(argv)
+
+    if len(position_args) < 2:
+        parser.error('Missing positional arguments for <dst-dir> and <src-dir>')
+
+    dst_dir = position_args[0]
+    src_dirs = position_args[1:]
+
+    return options, dst_dir, src_dirs
+
+
+def get_filter(options):
+    if options.audio_media_only:
+        return create_filter('audio/', audio_extensions)
+    if options.video_media_only:
+        return create_filter('video/', video_extensions)
+    return lambda p: true
+
+
+def create_filter(mimetype_prefix, filename_extensions):
+    def file_filter(path):
+        mime_type, _ = mimetypes.guess_type(path)
+        if mime_type and mime_type.startswith(mimetype_prefix):
+            return True
+        return path.lower().endswith(filename_extensions)
+    return file_filter
+
+
+def walk_dirs(dirs, filter_fn, options):
+    filtered_files = []
+
+    for src_dir in dirs:
+        for (dir, _, files) in os.walk(os.path.abspath(src_dir), followlinks=not options.do_not_follow_symlinks):
+            filtered_files.extend(filter(filter_fn, map(lambda f: os.path.join(dir, f), files)))
+
+    return filtered_files
+
+
+def main():
+    options, dst_dir, src_dirs = parse_args(sys.argv[1:])
+    file_filter = get_filter(options)
+    src_files = walk_dirs(src_dirs, file_filter, options)
+    src_files = random.sample(src_files, options.limit)
+
+    if not os.path.isdir(dst_dir):
+        os.makedirs(dst_dir)
+
+    link_fun = os.link if options.hardlinks else os.symlink
+
+    idx_pattern_len = int(math.log10(options.limit - 1)) + 1
+    for i, s in enumerate(src_files):
+        dst = os.path.join(dst_dir, '%0*d_%s' % (idx_pattern_len, i, os.path.basename(s)))
+        link_fun(s, dst)
+
+    print("Generated %d links in directory '%s'" % (len(src_files), dst_dir))
+
+
+if __name__ == '__main__':
+    main()
